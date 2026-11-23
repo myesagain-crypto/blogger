@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: wp-plugin-insights-blogger-bridge
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT app:app
+    healthCheckPath: /health
+    envVars:
+      - key: BLOG_URL
+        value: https://wpplugininsights.blogspot.com/
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: FERNET_KEY
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
