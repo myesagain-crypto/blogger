@@ -103,7 +103,7 @@ def index():
     except Exception:
         return page("<section><p>Could not load Blogger posts. Check authorization or service logs.</p></section>"), 502
     return page("""<section><p>Connected: {{ email }} · <a href="/logout">Log out</a></p>
-    <a class="btn" href="/new">Create draft</a></section><section><h2>Recent posts</h2>
+    <a class="btn" href="/new">Create draft</a> <a class="btn" href="/imports">Editorial queue</a></section><section><h2>Recent posts</h2>
     {% for p in posts %}<p><b>{{p.title}}</b> — {{p.status}}
     {% if p.status == "DRAFT" %}<a href="/edit/{{p.id}}">Edit</a>{% endif %}
     {% if p.url %}<a href="{{p.url}}" target="_blank" rel="noopener">View</a>{% endif %}</p>
@@ -156,6 +156,88 @@ def callback():
     session["email"] = ADMIN
     session["csrf"] = secrets.token_urlsafe(32)
     return redirect("/")
+
+# Queue-to-Blogger draft import: only authenticated owner can import; nothing auto-publishes.
+QUEUE_URL = "https://api.github.com/repos/myesagain-crypto/blogger/contents/queue"
+def queue_items():
+    import re
+    r = requests.get(QUEUE_URL, headers={"Accept":"application/vnd.github+json"}, timeout=15)
+    if r.status_code == 404:
+        return []
+    r.raise_for_status()
+    out = []
+    for item in r.json()[:40]:
+        filename = item.get("name", "")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,80}\\.json", filename) or item.get("type") != "file":
+            continue
+        raw = requests.get("https://raw.githubusercontent.com/myesagain-crypto/blogger/main/queue/" + filename, timeout=15)
+        if not raw.ok or len(raw.content) > 70000:
+            continue
+        try:
+            obj = raw.json()
+            if not isinstance(obj, dict):
+                continue
+            title, content = obj.get("title", ""), obj.get("content_html", "")
+            labels = obj.get("labels", [])
+            if not (isinstance(title, str) and 10 <= len(title) <= 180 and isinstance(content, str) and 300 <= len(content) <= 60000 and isinstance(labels, list)):
+                continue
+            out.append({"filename": filename, "title": title, "content_html": content,
+                        "labels": [str(x)[:35] for x in labels[:8]],
+                        "summary": str(obj.get("summary",""))[:300]})
+        except (ValueError, TypeError):
+            continue
+    return out
+
+@app.get("/imports")
+@admin_only
+def imports():
+    initialize()
+    with connection() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS imported_drafts (filename TEXT PRIMARY KEY, blogger_id TEXT, created_at TIMESTAMPTZ DEFAULT now())")
+        imported = {row[0] for row in conn.execute("SELECT filename FROM imported_drafts WHERE blogger_id IS NOT NULL")}
+    try:
+        items = queue_items()
+    except requests.RequestException:
+        return page("<section>Cannot reach the public editorial queue right now. Try again later.</section>"), 502
+    return page("""<section><a href="/">← Dashboard</a><h2>Editorial queue</h2>
+    <p>These articles were prepared in the connected GitHub repository. Import creates <b>Blogger drafts only</b>; publishing is a separate step.</p>
+    {% for item in items %}<hr><h3>{{item.title}}</h3><p>{{item.summary}}</p>
+    {% if item.filename in imported %}<p>Already imported ✓</p>{% else %}
+    <form method="post" action="/imports/submit"><input type="hidden" name="csrf" value="{{csrf}}">
+    <input type="hidden" name="filename" value="{{item.filename}}">
+    <button type="submit">Import as Blogger draft</button></form>{% endif %}
+    {% else %}<p>No queued articles found.</p>{% endfor %}</section>""", items=items, imported=imported, csrf=session["csrf"])
+
+@app.post("/imports/submit")
+@admin_only
+def imports_submit():
+    import re
+    verify_csrf()
+    filename = request.form.get("filename","")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,80}\\.json", filename):
+        abort(400)
+    entries = {x["filename"]:x for x in queue_items()}
+    if filename not in entries:
+        abort(404)
+    initialize()
+    entry = entries[filename]
+    with connection() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS imported_drafts (filename TEXT PRIMARY KEY, blogger_id TEXT, created_at TIMESTAMPTZ DEFAULT now())")
+        with conn.transaction():
+            claimed = conn.execute("INSERT INTO imported_drafts(filename) VALUES (%s) ON CONFLICT DO NOTHING RETURNING filename", (filename,)).fetchone()
+            if not claimed:
+                return redirect("/imports")
+        try:
+            saved = record()
+            if not saved:
+                raise RuntimeError("Google login is required")
+            response = blogger("POST", f"/blogs/{saved[1]}/posts", params={"isDraft":"true"},
+                json={"title":entry["title"],"content":entry["content_html"],"labels":entry["labels"]})
+            conn.execute("UPDATE imported_drafts SET blogger_id=%s WHERE filename=%s", (str(response["id"]), filename))
+        except Exception:
+            conn.execute("DELETE FROM imported_drafts WHERE filename=%s AND blogger_id IS NULL", (filename,))
+            raise
+    return redirect("/imports")
 
 @app.get("/logout")
 def logout():
