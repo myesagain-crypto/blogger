@@ -87,7 +87,8 @@ def health():
 @app.get("/")
 def index():
     if not configured():
-        return page("<section><h2>Setup required</h2><p>The site is deployed. Configure Google OAuth and the database in Render to enable login.</p></section>")
+        missing = [name for name, value in (("GOOGLE_CLIENT_ID", CLIENT_ID), ("GOOGLE_CLIENT_SECRET", CLIENT_SECRET), ("BASE_URL", BASE if BASE.startswith("https://") else ""), ("ADMIN_EMAIL", ADMIN), ("DATABASE_URL", DB), ("FERNET_KEY", KEY if CIPHER else ""), ("SESSION_SECRET", os.getenv("SESSION_SECRET", ""))) if not value]
+        return page("<section><h2>Setup required</h2><p>Missing environment variables:</p><ul>{% for name in missing %}<li><code>{{name}}</code></li>{% endfor %}</ul><p>Add these in Render Environment. No secret values are displayed.</p></section>", missing=missing)
     if session.get("email") != ADMIN:
         return page('<section><p>Only the authorized Google account can manage this blog.</p><a class="btn" href="/login">Connect Google</a></section>')
     if not session.get("csrf"):
