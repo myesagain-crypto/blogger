@@ -168,7 +168,7 @@ def queue_items():
     out = []
     for item in r.json()[:40]:
         filename = item.get("name", "")
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,80}\\.json", filename) or item.get("type") != "file":
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,80}\.json", filename) or item.get("type") != "file":
             continue
         raw = requests.get("https://raw.githubusercontent.com/myesagain-crypto/blogger/main/queue/" + filename, timeout=15)
         if not raw.ok or len(raw.content) > 70000:
@@ -214,7 +214,7 @@ def imports_submit():
     import re
     verify_csrf()
     filename = request.form.get("filename","")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,80}\\.json", filename):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,80}\.json", filename):
         abort(400)
     entries = {x["filename"]:x for x in queue_items()}
     if filename not in entries:
