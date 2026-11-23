@@ -18,7 +18,10 @@ DB = os.getenv("DATABASE_URL", "")
 KEY = os.getenv("FERNET_KEY", "")
 API = "https://www.googleapis.com/blogger/v3"
 SCOPE = "https://www.googleapis.com/auth/blogger https://www.googleapis.com/auth/userinfo.email"
-CIPHER = Fernet(KEY.encode()) if KEY else None
+try:
+    CIPHER = Fernet(KEY.encode()) if KEY else None
+except (ValueError, TypeError):
+    CIPHER = None
 
 def configured():
     return all((CLIENT_ID, CLIENT_SECRET, BASE.startswith("https://"), ADMIN, DB, CIPHER, os.getenv("SESSION_SECRET")))
